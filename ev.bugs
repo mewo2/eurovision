@@ -1,0 +1,22 @@
+model {
+  for (i in 1:n) {
+    y[i] ~ dbern(p.bound[i]);
+    p.bound[i] <- max(0, min(1, p[i]));
+    logit(p[i]) <- b.friend[country.a[i], giver[i]] - b.friend[country.b[i], giver[i]] + b.song[song.a[i]] - b.song[song.b[i]]
+  }
+
+  for (j in 1:n.countries) {
+    for (k in 1:n.countries) {
+      b.friend[j, k] ~ dnorm(0, tau.friend);
+    }
+  }
+  for (l in 1:n.songs) {
+    b.song[l] ~ dnorm(0, tau.song);
+  }
+  
+  tau.friend <- pow(sigma.friend, -2);
+  tau.song <- pow(sigma.song, -2);
+  
+  sigma.friend ~ dunif(0, 1000);
+  sigma.song ~ dunif(0, 1000);
+}
