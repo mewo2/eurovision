@@ -16,25 +16,18 @@ n.countries <- length(countries);
 
 cs <- function (x) c(0, cumsum(x));
 
-gibbs <- function (prefs, clist, iters=100) {
+gibbs <- function (prefs, clist, iters=50) {
   rank <- sample(clist);
+  len <- length(rank);
   for (i in 1:iters) {
     n <- sample.int(length(rank), 1);
     item <- rank[n];
     rank <- rank[-n];
     pr <- prefs[rank] - prefs[item];
-    pos <- sample.int(length(rank) + 1, 1, prob=exp(cs(pr) - rev(cs(rev(pr)))));
+    pos <- sample.int(len, 1, prob=exp(cs(pr) - rev(cs(rev(pr)))));
     rank <- append(rank, item, pos-1);
   }
   return(rank);
-}
-
-build.prefs <- function (data, alpha=1) {
-  l <- list()
-  for (giver in countries) {
-    l[[giver]] <- f.giver(subset(data, Giver==giver), alpha);
-  }
-  return(l);
 }
 
 simulate.vote <- function(entrants, voter, prefs) {
@@ -46,21 +39,50 @@ simulate.vote <- function(entrants, voter, prefs) {
   return(scores[entrants]);
 }
 
-simulate.contest <- function (entrants, voters, prefs) {
+simulate.contest <- function (entrants, voters, friends, quality) {
+  names(quality) <- countries;
+  colnames(friends) <- countries;
+  rownames(friends) <- countries;
+  prefs <- friends + quality;
   scores <- matrix(0, n.countries, n.countries, dimnames=list(countries, countries));
   for (v in voters) {
     scores[entrants, v] <- simulate.vote(entrants, v, prefs);
   }
-  return(scores[entrants, voters]);
+  results <- list(
+      scores=scores[entrants, voters],
+      totals=rowSums(scores[entrants, voters]),
+      entrants=entrants,
+      voters=voters,
+      friends=friends,
+      quality=quality
+    );
+  return(results);
 }
 
-simulate.twostage <- function (semi1, semi1.v, semi2, semi2.v, prefs) {
-  extras <- countries[c(semi1.v[!(semi1.v %in% semi1)], semi2.v[!(semi2.v %in% semi2)])];
-  quals.1 <- semi1[rank(-rowSums(simulate.contest(semi1, semi1.v, prefs)), ties.method='random') <= 10];
-  quals.2 <- semi2[rank(-rowSums(simulate.contest(semi2, semi2.v, prefs)), ties.method='random') <= 10];
+simulate.twostage <- function (semi1.e, semi1.v, semi2.e, semi2.v, friends, quality) {
+  extras <- countries[c(semi1.v[!(semi1.v %in% semi1.e)], semi2.v[!(semi2.v %in% semi2.e)])];
+  semi1 <- simulate.contest(semi1.e, semi1.v, friends, quality);
+  quals.1 <- qualifiers(semi1);
+  semi2 <- simulate.contest(semi2.e, semi2.v, friends, quality);
+  quals.2 <- qualifiers(semi2);
+  
   entrants <- countries[c(quals.1, quals.2, extras)];
   voters <- countries[c(semi1.v, semi2.v)];
-  return(simulate.contest(entrants, voters, prefs));
+  
+  results <- simulate.contest(entrants, voters, friends, quality)
+  output <- list(
+      final=results,
+      semis=list(semi1, semi2)
+    );
+  return(output);
+}
+
+qualifiers <- function (contest, n=10) {
+  return(contest$entrants[rank(-contest$totals, ties.method='random') <= n]);
+}
+
+winner <- function (contest) {
+  return(contest$entrants[which.max(contest$totals)]);
 }
 
 comparisons <- function (data) {
@@ -87,6 +109,60 @@ fit.jags <- function (data, ...) {
   cat(n, "comparisons,", length(songs), "songs", length(songs) + n.countries^2 + 2, "parameters\n");
   j <- jags.model('ev.bugs', list(n=n, n.countries=n.countries, n.songs=length(songs), y=rep(1, n), country.a=comps$Country.A, country.b=comps$Country.B, giver=comps$Giver, song.a=comps$Song.A, song.b=comps$Song.B), ...);
   return(list(songs=songs, model=j))
+}
+
+sample.model <- function (data, n=100, thin=10) {
+  m <- fit.jags(data, inits=list(sigma.friend=2, sigma.song=2), n.adapt=100);
+  samps <- jags.samples(m$model, c('b.friend', 'b.song', 'sigma.friend', 'sigma.song'), n*thin, thin=thin);
+  id <- function(x) x;
+  friends <- alply(samps$b.friend, c(3,4), id);
+  songs.quality <- alply(samps$b.song, c(2,3), id);
+  sigma.friend <- alply(samps$sigma.friend, c(2,3), id);
+  sigma.song <- alply(samps$sigma.song, c(2,3), id);
+  return(list(friends=friends, songs=m$songs, songs.quality=songs.quality, sigma.friend=sigma.friend, sigma.song=sigma.song));
+}
+
+random <- function (x) sample(x, 1)[[1]];
+
+winning.probs <- function (results) {
+  table(unlist(llply(results, function (x) winner(x$final)))) / length(results);
+}
+
+qualify.probs <- function (results) {
+  v <- rowMeans(sapply(results, function (x) countries %in% x$final$entrants));
+  names(v) <- countries;
+  return(v);
+}
+simulate.final.12 <- function (samps) {
+  i <- sample(length(samps$friends), 1);
+  friends <- samps$friends[[i]]
+  quality <- rnorm(n.countries, 0, samps$sigma.song[[i]]);
+  simulate.twostage(semi12.1.e, semi12.1.v, semi12.2.e, semi12.2.v, friends, quality);
+}
+
+simulate.given.s1 <- function (results, s1, n) {
+  extras <- factor(c('Azerbaijan', 'France', 'Germany', 'Italy', 'Spain', 'United Kingdom'), countries);
+  s1 <- factor(s1, countries);
+  qualities <- llply(s1, function (x) quality.if.qualify(results, x));
+  names(qualities) <- s1;
+  res <- list();
+  for (i in 1:n) {
+    s2 <- results[[i]]$semis[[2]];
+    friends <- s2$friends;
+    quality <- s2$quality;
+    for (j in 1:10) {
+      quality[s1[j]] <- sample(qualities[[j]], 1);
+    }
+    res[[i]] <- simulate.contest(countries[c(s1, qualifiers(s2), extras)], countries[c(semi12.1.v, semi12.2.v)], friends, quality);
+  }
+  return(res);
+}
+if.qualify <- function (results, country) {
+  Filter(function (x) country %in% x$final$entrants, results);
+}
+
+quality.if.qualify <- function (results, country) {
+  sapply(if.qualify(results, country), function (x) x$final$quality[country])
 }
 
 write.graph <- function(data, filename) {
