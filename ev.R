@@ -99,7 +99,7 @@ fit.jags <- function (data, ...) {
   
   comps <- comparisons(data);
   n <- nrow(comps);
-  comps$Year <- substr(comps$Year, 1, 4);
+  comps$Year <- as.numeric(substr(comps$Year, 1, 4));
   comps$Song.A <- paste(comps$Country.A, comps$Year, sep='/');
   comps$Song.B <- paste(comps$Country.B, comps$Year, sep='/');
   songs <- sort(unique(c(comps$Song.A, comps$Song.B)));
@@ -107,7 +107,18 @@ fit.jags <- function (data, ...) {
   comps$Song.B <- factor(comps$Song.B, songs);
   cat("Fitting model:\n");
   cat(n, "comparisons,", length(songs), "songs", length(songs) + n.countries^2 + 2, "parameters\n");
-  j <- jags.model('ev.bugs', list(n=n, n.countries=n.countries, n.songs=length(songs), y=rep(1, n), country.a=comps$Country.A, country.b=comps$Country.B, giver=comps$Giver, song.a=comps$Song.A, song.b=comps$Song.B), ...);
+  j <- jags.model('ev.bugs', 
+                  list(
+                      n=n, 
+                      n.countries=n.countries, 
+                      n.songs=length(songs), 
+                      y=rep(1, n), 
+                      country.a=comps$Country.A, 
+                      country.b=comps$Country.B, 
+                      giver=comps$Giver, 
+                      song.a=comps$Song.A, 
+                      song.b=comps$Song.B
+                    ), ...);
   return(list(songs=songs, model=j))
 }
 
@@ -119,7 +130,13 @@ sample.model <- function (data, n=100, thin=10) {
   songs.quality <- alply(samps$b.song, c(2,3), id);
   sigma.friend <- alply(samps$sigma.friend, c(2,3), id);
   sigma.song <- alply(samps$sigma.song, c(2,3), id);
-  return(list(friends=friends, songs=m$songs, songs.quality=songs.quality, sigma.friend=sigma.friend, sigma.song=sigma.song));
+  return(list(
+      friends=friends, 
+      songs=m$songs, 
+      songs.quality=songs.quality, 
+      sigma.friend=sigma.friend, 
+      sigma.song=sigma.song
+    ));
 }
 
 random <- function (x) sample(x, 1)[[1]];
@@ -157,6 +174,30 @@ simulate.given.s1 <- function (results, s1, n) {
   }
   return(res);
 }
+
+simulate.given.s1.s2 <- function (results, s1, s2, n) {
+  extras <- factor(c('Azerbaijan', 'France', 'Germany', 'Italy', 'Spain', 'United Kingdom'), countries);
+  s1 <- factor(s1, countries);
+  qualities.s1 <- llply(s1, function (x) quality.if.qualify(results, x));
+  names(qualities.s1) <- s1;
+  s2 <- factor(s2, countries);
+  qualities.s2 <- llply(s2, function (x) quality.if.qualify(results, x));
+  names(qualities.s2) <- s2;
+  
+  res <- list();
+  for (i in 1:n) {
+    f <- results[[i %% length(results)]]$final;
+    friends <- f$friends;
+    quality <- f$quality;
+    for (j in 1:10) {
+      quality[s1[j]] <- sample(qualities.s1[[j]], 1);
+      quality[s2[j]] <- sample(qualities.s2[[j]], 1);
+    }
+    res[[i]] <- simulate.contest(countries[c(s1, s2, extras)], countries[c(semi12.1.v, semi12.2.v)], friends, quality);
+  }
+  return(res);
+}
+
 if.qualify <- function (results, country) {
   Filter(function (x) country %in% x$final$entrants, results);
 }
