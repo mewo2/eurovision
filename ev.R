@@ -186,7 +186,7 @@ simulate.given.s1.s2 <- function (results, s1, s2, n) {
   
   res <- list();
   for (i in 1:n) {
-    f <- results[[i %% length(results)]]$final;
+    f <- results[[i %% length(results) + 1]]$final;
     friends <- f$friends;
     quality <- f$quality;
     for (j in 1:10) {
@@ -219,4 +219,37 @@ write.graph <- function(data, filename) {
   }
   cat('}\n', file=f);
   close(f);
+}
+
+rev.comps <- function (comps) {
+  data.frame(Year=comps$Year, Giver=comps$Giver, Country.A=comps$Country.B, Country.B=comps$Country.A);
+}
+
+dupcomps <- function (r1, r2) {
+  c1 <- comparisons(r1);
+  c2 <- comparisons(r2);
+  c2.rev <- rev.comps(c2);
+  bound <- rbind(c1[,-1], c2[,-1])
+  rows.fwd <- bound[duplicated(bound),];
+  rows.rev <- bound[duplicated(rbind(c1[,-1], c2.rev[,-1])),];
+  return(list(fwd=rows.fwd, rev=rows.rev));
+}
+
+meltscores <- function (contest, year='sim') {
+  df <- cbind(year, melt(contest$scores));
+  colnames(df) <- c('Year', 'Country', 'Giver', 'Score');
+  df$Country <- factor(df$Country, countries);
+  df$Giver <- factor(df$Giver, countries);
+  return(subset(df, Country != Giver));
+}
+
+munge.csv <- function (filename, year) {
+  grid <- read.csv(filename, stringsAsFactors=F);
+  df <- melt(grid);
+  df[,2] <- as.character(df[,2]);
+  df[substr(df[,2], 1, 6) == 'Bosnia',2] <- 'Bosnia-Herzegovina';
+  df[,2] <- gsub('.', ' ', df[,2], fixed=T);
+  df[is.na(df[,3]),3] <- 0;
+  data <- data.frame(Year=year, Country=factor(df[,1], countries), Giver=factor(df[,2], countries), Score=df[,3]);
+  return(subset(data, Country != Giver));
 }
